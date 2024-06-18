@@ -1,5 +1,4 @@
 
-
 resource "null_resource" "helm_login" {
 
   provisioner "local-exec" {
@@ -9,71 +8,65 @@ resource "null_resource" "helm_login" {
 
 resource "kubernetes_namespace_v1" "this" {
   metadata {
-    name = "ack-system"
+    name = var.namespace
   }
 }
 
-resource "helm_release" "s3" {
-  count      = var.s3 ? 1 : 0
-  name       = "s3-controller"
+resource "kubernetes_secret_v1" "this" {
+  count = var.eks ? 0 : 1
+
+  metadata {
+    name      = "aws-creds"
+    namespace = kubernetes_namespace_v1.this.metadata.0.name
+  }
+
+  data = {
+    credentials = file(var.aws_credentials_file)
+  }
+}
+
+
+# AWS Related 
+resource "helm_release" "this" {
+  for_each   = var.controllers
+  name       = each.key
   namespace  = kubernetes_namespace_v1.this.metadata.0.name
   repository = "oci://public.ecr.aws/aws-controllers-k8s"
-  chart      = "s3-chart"
-  version    = "1.0.12"
+  chart      = "${each.key}-chart"
+  version    = each.value.version
 
   set {
     name  = "aws.region"
     value = var.aws_region
   }
 
-  set {
-    name  = "aws.credentials.secretName"
-    value = "aws-creds"
+  dynamic "set" {
+    for_each = var.eks ? [0] : [1]
+    content {
+      name  = "aws.credentials.secretName"
+      value = "aws-creds"
+    }
   }
 
-  set {
-    name  = "aws.credentials.secretKey"
-    value = "credentials"
+  dynamic "set" {
+    for_each = var.eks ? [0] : [1]
+    content {
+      name  = "aws.credentials.secretKey"
+      value = "credentials"
+    }
   }
 
-  set {
-    name  = "aws.credentials.profile"
-    value = "default"
+  dynamic "set" {
+    for_each = var.eks ? [0] : [1]
+    content {
+      name  = "aws.credentials.profile"
+      value = var.aws_profile
+    }
   }
+
   depends_on = [
-    null_resource.helm_login
-  ]
-}
-
-resource "helm_release" "ec2" {
-  count      = var.ec2 ? 1 : 0
-  name       = "ec2-controller"
-  namespace  = kubernetes_namespace_v1.this.metadata.0.name
-  repository = "oci://public.ecr.aws/aws-controllers-k8s"
-  chart      = "ec2-chart"
-  version    = "1.0.12"
-
-  set {
-    name  = "aws.region"
-    value = var.aws_region
-  }
-
-  set {
-    name  = "aws.credentials.secretName"
-    value = "aws-creds"
-  }
-
-  set {
-    name  = "aws.credentials.secretKey"
-    value = "credentials"
-  }
-
-  set {
-    name  = "aws.credentials.profile"
-    value = "default"
-  }
-  depends_on = [
-    null_resource.helm_login
+    null_resource.helm_login,
+    kubernetes_secret_v1.this
   ]
 }
 
